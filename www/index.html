@@ -79,6 +79,18 @@
     <h2>Chores</h2>
     <div id="chore-list"></div>
     <button class="btn btn-add" id="add-chore-btn">+ Add chore</button>
+
+    <h2>Availability</h2>
+    <div class="names-toggle-row">
+      <label class="toggle-label">
+        <input type="checkbox" id="availability-toggle" />
+        Disable chores on specific days
+      </label>
+    </div>
+    <div id="availability-section" style="display:none">
+      <p class="avail-hint">Click a cell to toggle whether that chore runs on that day.</p>
+      <div id="availability-grid"></div>
+    </div>
   </div>
 
   <button class="btn btn-generate" id="generate-btn">Generate Schedule</button>

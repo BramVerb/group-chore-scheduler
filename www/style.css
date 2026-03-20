@@ -57,6 +57,15 @@ h2 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #444; }
   max-width: 320px;
 }
 
+/* Availability grid */
+.avail-hint { font-size: 0.82rem; color: #666; margin-bottom: 0.5rem; }
+.avail-table { border-collapse: collapse; font-size: 0.85rem; }
+.avail-table th { background: #f0f4ff; font-weight: 700; padding: 0.3rem 0.75rem; border: 1px solid #ddd; }
+.avail-day-label { padding: 0.25rem 0.6rem; font-weight: 600; background: #f9f9f9; border: 1px solid #ddd; text-align: center; }
+.avail-cell { width: 52px; height: 34px; text-align: center; cursor: pointer; border: 1px solid #ddd; font-size: 0.85rem; font-weight: 600; background: #dcfce7; color: #166534; user-select: none; }
+.avail-cell:hover { filter: brightness(0.93); }
+.avail-cell.avail-disabled { background: #fee2e2; color: #991b1b; }
+
 /* Chore list */
 #chore-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.75rem; }
 

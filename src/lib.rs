@@ -25,6 +25,8 @@ struct Input {
     #[serde(default)]
     num_supervisors: usize,
     supervisor_names: Option<Vec<String>>,
+    #[serde(default)]
+    disabled: Vec<Vec<bool>>,   // disabled[chore_idx][day_idx]
     chores: Vec<ChoreSpec>,
 }
 
@@ -75,6 +77,10 @@ fn make_label(names: &Option<Vec<String>>, i: usize) -> String {
         .unwrap_or_else(|| person_label(i))
 }
 
+fn is_disabled(disabled: &[Vec<bool>], chore: usize, day: usize) -> bool {
+    disabled.get(chore).and_then(|row| row.get(day)).copied().unwrap_or(false)
+}
+
 // ── Worker solver ─────────────────────────────────────────────────────────────
 
 /// relax_variety: 0 = tight (floor..=ceil), 1 = loose (±1), 2 = none
@@ -86,7 +92,12 @@ fn solve_workers(
     let d = input.days;
     let c = input.chores.len();
 
-    let total: usize = d * input.chores.iter().map(|ch| ch.people_needed).sum::<usize>();
+    let total: usize = (0..input.chores.len())
+        .map(|ci| {
+            (0..d).filter(|&dy| !is_disabled(&input.disabled, ci, dy)).count()
+                * input.chores[ci].people_needed
+        })
+        .sum();
     let lo = total / p;
     let hi = (total + p - 1) / p;
 
@@ -109,12 +120,13 @@ fn solve_workers(
         }
     }
 
-    // Each chore staffed exactly
+    // Each chore staffed exactly (0 workers on disabled days)
     for chore in 0..c {
         let need = input.chores[chore].people_needed as f64;
         for day in 0..d {
             let expr: Expression = (0..p).map(|person| x[person][chore][day]).sum();
-            model = model.with(constraint!(expr == need));
+            let required = if is_disabled(&input.disabled, chore, day) { 0.0 } else { need };
+            model = model.with(constraint!(expr == required));
         }
     }
 
@@ -133,7 +145,8 @@ fn solve_workers(
         let slack = if relax == 0 { 0usize } else { 1 };
         for person in 0..p {
             for chore in 0..c {
-                let total_chore = d * input.chores[chore].people_needed;
+                let enabled = (0..d).filter(|&dy| !is_disabled(&input.disabled, chore, dy)).count();
+                let total_chore = enabled * input.chores[chore].people_needed;
                 let floor = total_chore / p;
                 let ceil  = (total_chore + p - 1) / p;
                 let expr: Expression = (0..d).map(|dy| x[person][chore][dy]).sum();
@@ -167,8 +180,10 @@ fn solve_supervisors(
     let d  = input.days;
     let c  = input.chores.len();
 
-    // Total supervisor slots = 1 per chore per day
-    let total = d * c;
+    // Total supervisor slots = 1 per enabled chore-day
+    let total: usize = (0..c)
+        .map(|ci| (0..d).filter(|&dy| !is_disabled(&input.disabled, ci, dy)).count())
+        .sum();
     let lo = total / sv;
     let hi = (total + sv - 1) / sv;
 
@@ -183,11 +198,12 @@ fn solve_supervisors(
 
     let mut model = vars.minimise(Expression::from(0)).using(microlp);
 
-    // Each chore has exactly 1 supervisor per day
+    // Each chore has exactly 1 supervisor per day (0 on disabled days)
     for chore in 0..c {
         for day in 0..d {
             let expr: Expression = (0..sv).map(|sup| s[sup][chore][day]).sum();
-            model = model.with(constraint!(expr == 1.0));
+            let required = if is_disabled(&input.disabled, chore, day) { 0.0 } else { 1.0 };
+            model = model.with(constraint!(expr == required));
         }
     }
 
@@ -214,8 +230,9 @@ fn solve_supervisors(
         let slack = if relax == 0 { 0usize } else { 1 };
         for sup in 0..sv {
             for _chore in 0..c {
-                let floor = d / sv;
-                let ceil  = (d + sv - 1) / sv;
+                let enabled = (0..d).filter(|&dy| !is_disabled(&input.disabled, _chore, dy)).count();
+                let floor = enabled / sv;
+                let ceil  = (enabled + sv - 1) / sv;
                 let expr: Expression = (0..d).map(|dy| s[sup][_chore][dy]).sum();
                 model = model.with(constraint!(expr.clone() >= floor.saturating_sub(slack) as f64));
                 model = model.with(constraint!(expr <= (ceil + slack) as f64));

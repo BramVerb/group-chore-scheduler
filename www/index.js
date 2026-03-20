@@ -24,6 +24,7 @@ const exportBtn          = document.getElementById("export-btn");
 let lastResult = null;
 let lastChores = null;
 let lastHasSupervisors = false;
+let disabledSet = new Set(); // keys: "choreIdx:dayIdx" (0-based)
 const numPeopleInput     = document.getElementById("num-people");
 const customNamesToggle  = document.getElementById("custom-names-toggle");
 const namesField         = document.getElementById("names-field");
@@ -34,6 +35,9 @@ const numSupInput        = document.getElementById("num-supervisors");
 const customSupToggle    = document.getElementById("custom-sup-names-toggle");
 const supNamesField      = document.getElementById("sup-names-field");
 const supNamesInput      = document.getElementById("sup-names-input");
+const availabilityToggle  = document.getElementById("availability-toggle");
+const availabilitySection = document.getElementById("availability-section");
+const availabilityGrid    = document.getElementById("availability-grid");
 
 // ── Chore rows ────────────────────────────────────────────────────────────────
 function addChoreRow(name = "", people = 1) {
@@ -44,7 +48,20 @@ function addChoreRow(name = "", people = 1) {
     <input type="number" class="chore-people" min="1" value="${people}" />
     <button class="remove-btn" title="Remove">✕</button>
   `;
-  row.querySelector(".remove-btn").addEventListener("click", () => row.remove());
+  row.querySelector(".remove-btn").addEventListener("click", () => {
+    const allRows = [...choreList.querySelectorAll(".chore-row")];
+    const idx = allRows.indexOf(row);
+    // Shift disabled entries after the removed chore
+    const newSet = new Set();
+    for (const key of disabledSet) {
+      const [ci, di] = key.split(':').map(Number);
+      if (ci === idx) continue;
+      newSet.add(ci > idx ? `${ci - 1}:${di}` : key);
+    }
+    disabledSet = newSet;
+    row.remove();
+    if (availabilityToggle.checked) renderAvailabilityGrid();
+  });
   choreList.appendChild(row);
 }
 
@@ -111,6 +128,76 @@ numSupInput.addEventListener("input", () => {
   }
 });
 
+// ── Availability grid ─────────────────────────────────────────────────────────
+function renderAvailabilityGrid() {
+  const daysCount = parseInt(document.getElementById("days").value, 10) || 0;
+  const choreRows = [...choreList.querySelectorAll(".chore-row")];
+
+  if (!daysCount || !choreRows.length) {
+    availabilityGrid.innerHTML = '<p class="avail-hint">Set days and add chores first.</p>';
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "avail-table";
+
+  // Header: chore names
+  const thead = table.createTHead();
+  const hr = thead.insertRow();
+  const cornerTh = document.createElement("th");
+  cornerTh.textContent = "Day";
+  hr.appendChild(cornerTh);
+  choreRows.forEach((r, ci) => {
+    const th = document.createElement("th");
+    th.textContent = r.querySelector(".chore-name").value.trim() || `Chore ${ci + 1}`;
+    hr.appendChild(th);
+  });
+
+  // Body: one row per day
+  const tbody = table.createTBody();
+  for (let di = 0; di < daysCount; di++) {
+    const tr = tbody.insertRow();
+    const dayTd = tr.insertCell();
+    dayTd.textContent = di + 1;
+    dayTd.className = "avail-day-label";
+
+    choreRows.forEach((_, ci) => {
+      const key = `${ci}:${di}`;
+      const td = tr.insertCell();
+      td.className = "avail-cell" + (disabledSet.has(key) ? " avail-disabled" : "");
+      td.textContent = disabledSet.has(key) ? "✕" : "✓";
+      td.title = disabledSet.has(key) ? "Disabled — click to enable" : "Enabled — click to disable";
+      td.addEventListener("click", () => {
+        if (disabledSet.has(key)) disabledSet.delete(key);
+        else disabledSet.add(key);
+        renderAvailabilityGrid();
+      });
+    });
+  }
+
+  availabilityGrid.innerHTML = "";
+  availabilityGrid.appendChild(table);
+}
+
+// Availability grid
+availabilityToggle.addEventListener("change", () => {
+  if (availabilityToggle.checked) {
+    availabilitySection.style.display = "block";
+    renderAvailabilityGrid();
+  } else {
+    availabilitySection.style.display = "none";
+  }
+});
+document.getElementById("days").addEventListener("input", () => {
+  if (availabilityToggle.checked) renderAvailabilityGrid();
+});
+choreList.addEventListener("input", () => {
+  if (availabilityToggle.checked) renderAvailabilityGrid();
+});
+addChoreBtn.addEventListener("click", () => {
+  if (availabilityToggle.checked) renderAvailabilityGrid();
+});
+
 // ── Generate ──────────────────────────────────────────────────────────────────
 generateBtn.addEventListener("click", () => {
   errorBox.style.display = "none";
@@ -158,6 +245,14 @@ generateBtn.addEventListener("click", () => {
     }
   }
 
+  // Disabled chore-days
+  let disabled = null;
+  if (availabilityToggle.checked && disabledSet.size > 0) {
+    disabled = chores.map((_, ci) =>
+      Array.from({ length: days }, (_, di) => disabledSet.has(`${ci}:${di}`))
+    );
+  }
+
   generateBtn.disabled = true;
   generateBtn.innerHTML = `<span class="spinner"></span> Solving…`;
 
@@ -166,6 +261,7 @@ generateBtn.addEventListener("click", () => {
       const payload = { days, num_people, chores, supervisors_enabled, num_supervisors };
       if (names)            payload.names = names;
       if (supervisor_names) payload.supervisor_names = supervisor_names;
+      if (disabled)         payload.disabled = disabled;
       const result = JSON.parse(generate_schedule(JSON.stringify(payload)));
 
       if (result.error) {
