@@ -1,0 +1,165 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, sans-serif;
+  background: #f4f6f9;
+  color: #222;
+  padding: 2rem 1rem;
+}
+
+h1 { font-size: 1.6rem; margin-bottom: 1.5rem; }
+h2 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #444; }
+
+.container { max-width: 900px; margin: 0 auto; }
+
+.card {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.1);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.form-row {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  align-items: flex-end;
+}
+
+.field { display: flex; flex-direction: column; gap: 0.3rem; }
+.field label { font-size: 0.85rem; font-weight: 600; color: #555; }
+.field input[type=number] {
+  width: 90px;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+
+/* Names toggle */
+.names-toggle-row { margin-bottom: 0.75rem; }
+.toggle-label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 600; color: #555; }
+.toggle-label input[type=checkbox] { width: 1rem; height: 1rem; cursor: pointer; }
+#names-field { margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.names-label { font-size: 0.85rem; font-weight: 600; color: #555; }
+#names-input {
+  font-family: monospace;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  resize: vertical;
+  width: 100%;
+  max-width: 320px;
+}
+
+/* Chore list */
+#chore-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.75rem; }
+
+.chore-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.chore-row input[type=text] {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.chore-row input[type=number] {
+  width: 70px;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.chore-row .remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #c00;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+.btn {
+  padding: 0.45rem 1rem;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.btn-add  { background: #e8f0fe; color: #1a56db; }
+.btn-generate { background: #1a56db; color: #fff; padding: 0.55rem 1.5rem; font-size: 1rem; }
+.btn-generate:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Error */
+#error-box {
+  display: none;
+  background: #fff0f0;
+  border: 1px solid #e00;
+  border-radius: 5px;
+  padding: 0.75rem 1rem;
+  color: #c00;
+  margin-bottom: 1rem;
+}
+
+/* Output section */
+#output { display: none; }
+
+/* Schedule grid */
+.schedule-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.schedule-table th, .schedule-table td {
+  border: 1px solid #ddd;
+  padding: 0.4rem 0.6rem;
+  text-align: center;
+}
+.schedule-table th { background: #f0f4ff; font-weight: 700; }
+.schedule-table td { vertical-align: top; }
+.schedule-table tr:nth-child(even) td { background: #fafafa; }
+.initials { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; }
+.initial-tag {
+  background: #d1e7ff;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Summary table */
+.summary-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.summary-table th, .summary-table td {
+  border: 1px solid #ddd;
+  padding: 0.35rem 0.75rem;
+  text-align: center;
+}
+.summary-table th { background: #f0f4ff; }
+.summary-table td:first-child { font-weight: 700; }
+
+.panels { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: flex-start; }
+.panel { flex: 1; min-width: 280px; }
+
+.spinner {
+  display: inline-block;
+  width: 1rem; height: 1rem;
+  border: 2px solid #aaa;
+  border-top-color: #1a56db;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 0.4rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
