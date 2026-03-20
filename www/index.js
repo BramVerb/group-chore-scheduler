@@ -18,6 +18,12 @@ const errorBox           = document.getElementById("error-box");
 const outputDiv          = document.getElementById("output");
 const scheduleDiv        = document.getElementById("schedule-container");
 const summaryDiv         = document.getElementById("summary-container");
+const exportBtn          = document.getElementById("export-btn");
+
+// Last successful result, kept for CSV export
+let lastResult = null;
+let lastChores = null;
+let lastHasSupervisors = false;
 const numPeopleInput     = document.getElementById("num-people");
 const customNamesToggle  = document.getElementById("custom-names-toggle");
 const namesField         = document.getElementById("names-field");
@@ -165,6 +171,9 @@ generateBtn.addEventListener("click", () => {
       if (result.error) {
         showError(result.error);
       } else {
+        lastResult = result;
+        lastChores = chores;
+        lastHasSupervisors = supervisors_enabled;
         renderOutput(result, chores, supervisors_enabled);
       }
     } catch (err) {
@@ -311,3 +320,88 @@ function showError(msg) {
   errorBox.textContent = msg;
   errorBox.style.display = "block";
 }
+
+// ── CSV export ────────────────────────────────────────────────────────────────
+function csvCell(v) {
+  const s = String(v ?? "");
+  return s.includes(",") || s.includes('"') || s.includes("\n")
+    ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function csvRow(cells) { return cells.map(csvCell).join(","); }
+
+exportBtn.addEventListener("click", () => {
+  if (!lastResult) return;
+  const { schedule, workers, supervisors } = lastResult;
+  const choreNames = lastChores.map(c => c.name);
+  const rows = [];
+
+  // ── Schedule section ──────────────────────────────────────────────────────
+  // Grid layout: columns = chores, rows grouped by day.
+  // If supervisors enabled, first row of each day group = supervisors.
+  // Subsequent rows = one worker per row (padded with "" across chores).
+  rows.push(["SCHEDULE"]);
+  rows.push(["Day", ...choreNames]);
+
+  const days = Math.max(...schedule.map(a => a.day));
+  for (let d = 1; d <= days; d++) {
+    const entries = choreNames.map(n => schedule.find(a => a.day === d && a.chore === n) ?? { people: [], supervisor: null });
+    const maxWorkers = Math.max(...entries.map(e => e.people.length));
+    let firstRow = true;
+
+    // Supervisor row (only when supervisors enabled)
+    if (lastHasSupervisors) {
+      rows.push([d, ...entries.map(e => e.supervisor ?? "")]);
+      firstRow = false;
+    }
+
+    // Worker rows
+    for (let i = 0; i < maxWorkers; i++) {
+      rows.push([firstRow && i === 0 ? d : "", ...entries.map(e => e.people[i] ?? "")]);
+    }
+  }
+
+  rows.push([]);  // blank separator
+
+  // ── Worker summary ────────────────────────────────────────────────────────
+  rows.push(["WORKER SUMMARY"]);
+
+  // Build per-chore counts for workers
+  const workerPerChore = {};
+  choreNames.forEach(n => workerPerChore[n] = {});
+  schedule.forEach(a => a.people.forEach(name => {
+    workerPerChore[a.chore][name] = (workerPerChore[a.chore][name] || 0) + 1;
+  }));
+
+  rows.push(["Person", ...choreNames, "Total"]);
+  workers.forEach(({ name, total }) => {
+    rows.push([name, ...choreNames.map(n => workerPerChore[n][name] || 0), total]);
+  });
+
+  // ── Supervisor summary ────────────────────────────────────────────────────
+  if (lastHasSupervisors && supervisors.length > 0) {
+    rows.push([]);
+    rows.push(["SUPERVISOR SUMMARY"]);
+
+    const supPerChore = {};
+    choreNames.forEach(n => supPerChore[n] = {});
+    schedule.forEach(a => {
+      if (a.supervisor) {
+        supPerChore[a.chore][a.supervisor] = (supPerChore[a.chore][a.supervisor] || 0) + 1;
+      }
+    });
+
+    rows.push(["Person", ...choreNames, "Total"]);
+    supervisors.forEach(({ name, total }) => {
+      rows.push([name, ...choreNames.map(n => supPerChore[n][name] || 0), total]);
+    });
+  }
+
+  const csv = rows.map(csvRow).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "chore-schedule.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+});

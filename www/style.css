@@ -99,6 +99,11 @@ h2 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #444; }
 .btn-generate { background: #1a56db; color: #fff; padding: 0.55rem 1.5rem; font-size: 1rem; }
 .btn-generate:disabled { opacity: 0.6; cursor: not-allowed; }
 
+/* Output toolbar */
+.output-toolbar { display: flex; justify-content: flex-end; margin-bottom: 0.75rem; }
+.btn-export { background: #e6f4ea; color: #166534; }
+.btn-export:hover { background: #bbf7d0; }
+
 /* Error */
 #error-box {
   display: none;
