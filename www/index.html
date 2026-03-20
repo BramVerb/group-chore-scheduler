@@ -17,21 +17,52 @@
         <label for="days">Number of days</label>
         <input type="number" id="days" min="1" max="365" value="7" />
       </div>
-      <div class="field">
-        <label for="num-people">Number of people</label>
-        <input type="number" id="num-people" min="2" value="20" />
-      </div>
     </div>
 
+    <!-- Workers -->
+    <h2>Workers</h2>
+    <div class="form-row">
+      <div class="field">
+        <label for="num-people">Number of workers</label>
+        <input type="number" id="num-people" min="1" value="20" />
+      </div>
+    </div>
     <div class="names-toggle-row">
       <label class="toggle-label">
         <input type="checkbox" id="custom-names-toggle" />
-        Specify names
+        Specify worker names
       </label>
     </div>
     <div id="names-field" style="display:none">
-      <label for="names-input" class="names-label">Names (one per line)</label>
+      <label for="names-input" class="names-label">Worker names (one per line)</label>
       <textarea id="names-input" rows="6" spellcheck="false" placeholder="One name per line"></textarea>
+    </div>
+
+    <!-- Supervisors -->
+    <h2>Supervisors</h2>
+    <div class="names-toggle-row">
+      <label class="toggle-label">
+        <input type="checkbox" id="supervisors-toggle" />
+        Enable supervisors (one per chore per day, separate pool)
+      </label>
+    </div>
+    <div id="supervisor-settings" style="display:none">
+      <div class="form-row">
+        <div class="field">
+          <label for="num-supervisors">Number of supervisors</label>
+          <input type="number" id="num-supervisors" min="1" value="5" />
+        </div>
+      </div>
+      <div class="names-toggle-row">
+        <label class="toggle-label">
+          <input type="checkbox" id="custom-sup-names-toggle" />
+          Specify supervisor names
+        </label>
+      </div>
+      <div id="sup-names-field" style="display:none">
+        <label for="sup-names-input" class="names-label">Supervisor names (one per line)</label>
+        <textarea id="sup-names-input" rows="4" spellcheck="false" placeholder="One name per line"></textarea>
+      </div>
     </div>
 
     <h2>Chores</h2>

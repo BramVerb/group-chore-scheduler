@@ -16,8 +16,15 @@ struct ChoreSpec {
 #[derive(Deserialize)]
 struct Input {
     days: usize,
+    // Workers
     num_people: usize,
     names: Option<Vec<String>>,
+    // Supervisors (separate pool)
+    #[serde(default)]
+    supervisors_enabled: bool,
+    #[serde(default)]
+    num_supervisors: usize,
+    supervisor_names: Option<Vec<String>>,
     chores: Vec<ChoreSpec>,
 }
 
@@ -25,16 +32,29 @@ struct Input {
 struct Assignment {
     day: usize,
     chore: String,
+    /// Supervisor name (from the supervisor pool), shown first in the UI
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supervisor: Option<String>,
+    /// Worker names (from the worker pool)
     people: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SummaryEntry {
+    name: String,
+    total: usize,
 }
 
 #[derive(Serialize)]
 struct Output {
     schedule: Vec<Assignment>,
-    summary: std::collections::HashMap<String, usize>,
+    /// Worker totals, in person-index order
+    workers: Vec<SummaryEntry>,
+    /// Supervisor totals, in supervisor-index order (empty if disabled)
+    supervisors: Vec<SummaryEntry>,
 }
 
-// ── Solver ────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn person_label(i: usize) -> String {
     // Excel-style: 0→A, 25→Z, 26→AA, 27→AB, 51→AZ, 52→BA, …
@@ -48,96 +68,168 @@ fn person_label(i: usize) -> String {
     chars.iter().rev().collect()
 }
 
-/// relax_variety: 0 = tight (floor..=ceil), 1 = loose (floor-1..=ceil+1), 2 = none
-fn solve(input: &Input, relax_variety: u8) -> Option<Vec<(usize, usize, usize)>> {
+fn make_label(names: &Option<Vec<String>>, i: usize) -> String {
+    names.as_ref()
+        .and_then(|ns| ns.get(i))
+        .cloned()
+        .unwrap_or_else(|| person_label(i))
+}
+
+// ── Worker solver ─────────────────────────────────────────────────────────────
+
+/// relax_variety: 0 = tight (floor..=ceil), 1 = loose (±1), 2 = none
+fn solve_workers(
+    input: &Input,
+    relax: u8,
+) -> Option<Vec<(usize, usize, usize)>> {
     let p = input.num_people;
     let d = input.days;
     let c = input.chores.len();
 
-    // total slots and fairness bounds
-    let total_slots: usize = d * input.chores.iter().map(|ch| ch.people_needed).sum::<usize>();
-    let lo = total_slots / p;
-    let hi = (total_slots + p - 1) / p;
+    let total: usize = d * input.chores.iter().map(|ch| ch.people_needed).sum::<usize>();
+    let lo = total / p;
+    let hi = (total + p - 1) / p;
 
-    // Build ILP
-    let mut problem_vars = ProblemVariables::new();
+    let mut vars = ProblemVariables::new();
+    let x: Vec<Vec<Vec<Variable>>> = (0..p)
+        .map(|_| {
+            (0..c)
+                .map(|_| (0..d).map(|_| vars.add(variable().binary())).collect())
+                .collect()
+        })
+        .collect();
 
-    // x[person][chore][day] – stored flat: index = person*c*d + chore*d + day
-    let mut x: Vec<Vec<Vec<Variable>>> = Vec::with_capacity(p);
-    for _person in 0..p {
-        let mut xc: Vec<Vec<Variable>> = Vec::with_capacity(c);
-        for _chore in 0..c {
-            let mut xd: Vec<Variable> = Vec::with_capacity(d);
-            for _day in 0..d {
-                xd.push(problem_vars.add(variable().binary()));
-            }
-            xc.push(xd);
-        }
-        x.push(xc);
-    }
+    let mut model = vars.minimise(Expression::from(0)).using(microlp);
 
-    let mut model = problem_vars.minimise(Expression::from(0)).using(microlp);
-
-    // Constraint 1: at most one chore per person per day
+    // At most one chore per worker per day
     for person in 0..p {
         for day in 0..d {
-            let expr: Expression = (0..c)
-                .map(|chore| x[person][chore][day])
-                .sum::<Expression>();
+            let expr: Expression = (0..c).map(|ch| x[person][ch][day]).sum();
             model = model.with(constraint!(expr <= 1.0));
         }
     }
 
-    // Constraint 2: each chore staffed exactly on each day
+    // Each chore staffed exactly
     for chore in 0..c {
         let need = input.chores[chore].people_needed as f64;
         for day in 0..d {
-            let expr: Expression = (0..p)
-                .map(|person| x[person][chore][day])
-                .sum::<Expression>();
+            let expr: Expression = (0..p).map(|person| x[person][chore][day]).sum();
             model = model.with(constraint!(expr == need));
         }
     }
 
-    // Constraint 3: fair total workload
+    // Fair total workload
     for person in 0..p {
         let expr: Expression = (0..c)
-            .flat_map(|chore| (0..d).map(move |day| (chore, day)))
-            .map(|(chore, day)| x[person][chore][day])
-            .sum::<Expression>();
+            .flat_map(|ch| (0..d).map(move |dy| (ch, dy)))
+            .map(|(ch, dy)| x[person][ch][dy])
+            .sum();
         model = model.with(constraint!(expr.clone() >= lo as f64));
         model = model.with(constraint!(expr <= hi as f64));
     }
 
-    // Constraint 4: per-person per-chore variety (floor..=ceil, softened on retry)
-    if relax_variety < 2 {
-        let slack = if relax_variety == 0 { 0usize } else { 1 };
+    // Per-chore variety
+    if relax < 2 {
+        let slack = if relax == 0 { 0usize } else { 1 };
         for person in 0..p {
             for chore in 0..c {
-                let need = input.chores[chore].people_needed;
-                // fair share for this chore across all days
-                let total_chore_slots = d * need;
-                let floor = total_chore_slots / p;
-                let ceil  = (total_chore_slots + p - 1) / p;
-                let expr: Expression = (0..d)
-                    .map(|day| x[person][chore][day])
-                    .sum::<Expression>();
+                let total_chore = d * input.chores[chore].people_needed;
+                let floor = total_chore / p;
+                let ceil  = (total_chore + p - 1) / p;
+                let expr: Expression = (0..d).map(|dy| x[person][chore][dy]).sum();
                 model = model.with(constraint!(expr.clone() >= floor.saturating_sub(slack) as f64));
                 model = model.with(constraint!(expr <= (ceil + slack) as f64));
             }
         }
     }
 
-    let solution = model.solve().ok()?;
-
-    // Extract assignments
+    let sol = model.solve().ok()?;
     let mut result = Vec::new();
     for person in 0..p {
         for chore in 0..c {
             for day in 0..d {
-                let val = solution.value(x[person][chore][day]);
-                if val > 0.5 {
+                if sol.value(x[person][chore][day]) > 0.5 {
                     result.push((person, chore, day));
+                }
+            }
+        }
+    }
+    Some(result)
+}
+
+// ── Supervisor solver ─────────────────────────────────────────────────────────
+
+fn solve_supervisors(
+    input: &Input,
+    relax: u8,
+) -> Option<Vec<(usize, usize, usize)>> {
+    let sv = input.num_supervisors;
+    let d  = input.days;
+    let c  = input.chores.len();
+
+    // Total supervisor slots = 1 per chore per day
+    let total = d * c;
+    let lo = total / sv;
+    let hi = (total + sv - 1) / sv;
+
+    let mut vars = ProblemVariables::new();
+    let s: Vec<Vec<Vec<Variable>>> = (0..sv)
+        .map(|_| {
+            (0..c)
+                .map(|_| (0..d).map(|_| vars.add(variable().binary())).collect())
+                .collect()
+        })
+        .collect();
+
+    let mut model = vars.minimise(Expression::from(0)).using(microlp);
+
+    // Each chore has exactly 1 supervisor per day
+    for chore in 0..c {
+        for day in 0..d {
+            let expr: Expression = (0..sv).map(|sup| s[sup][chore][day]).sum();
+            model = model.with(constraint!(expr == 1.0));
+        }
+    }
+
+    // Each supervisor supervises at most 1 chore per day
+    for sup in 0..sv {
+        for day in 0..d {
+            let expr: Expression = (0..c).map(|ch| s[sup][ch][day]).sum();
+            model = model.with(constraint!(expr <= 1.0));
+        }
+    }
+
+    // Fair total distribution
+    for sup in 0..sv {
+        let expr: Expression = (0..c)
+            .flat_map(|ch| (0..d).map(move |dy| (ch, dy)))
+            .map(|(ch, dy)| s[sup][ch][dy])
+            .sum();
+        model = model.with(constraint!(expr.clone() >= lo as f64));
+        model = model.with(constraint!(expr <= hi as f64));
+    }
+
+    // Per-chore variety (1 slot per chore per day → d total per chore)
+    if relax < 2 {
+        let slack = if relax == 0 { 0usize } else { 1 };
+        for sup in 0..sv {
+            for _chore in 0..c {
+                let floor = d / sv;
+                let ceil  = (d + sv - 1) / sv;
+                let expr: Expression = (0..d).map(|dy| s[sup][_chore][dy]).sum();
+                model = model.with(constraint!(expr.clone() >= floor.saturating_sub(slack) as f64));
+                model = model.with(constraint!(expr <= (ceil + slack) as f64));
+            }
+        }
+    }
+
+    let sol = model.solve().ok()?;
+    let mut result = Vec::new();
+    for sup in 0..sv {
+        for chore in 0..c {
+            for day in 0..d {
+                if sol.value(s[sup][chore][day]) > 0.5 {
+                    result.push((sup, chore, day));
                 }
             }
         }
@@ -154,94 +246,127 @@ pub fn generate_schedule(input_json: &str) -> String {
         Err(e) => return format!("{{\"error\": \"Parse error: {}\"}}", e),
     };
 
-    // Basic validation
+    // Validate workers
     if input.num_people == 0 {
-        return r#"{"error": "Number of people must be at least 1"}"#.to_string();
+        return r#"{"error": "Number of workers must be at least 1"}"#.to_string();
     }
     if let Some(ref names) = input.names {
         if names.len() != input.num_people {
             return format!(
-                "{{\"error\": \"names list has {} entries but num_people is {}\"}}",
+                "{{\"error\": \"Worker names list has {} entries but num_people is {}\"}}",
                 names.len(), input.num_people
             );
         }
         if names.iter().any(|n| n.trim().is_empty()) {
-            return r#"{"error": "All names must be non-empty"}"#.to_string();
+            return r#"{"error": "All worker names must be non-empty"}"#.to_string();
         }
     }
+
+    // Validate supervisors
+    if input.supervisors_enabled {
+        if input.num_supervisors == 0 {
+            return r#"{"error": "Number of supervisors must be at least 1 when supervisors are enabled"}"#.to_string();
+        }
+        if let Some(ref names) = input.supervisor_names {
+            if names.len() != input.num_supervisors {
+                return format!(
+                    "{{\"error\": \"Supervisor names list has {} entries but num_supervisors is {}\"}}",
+                    names.len(), input.num_supervisors
+                );
+            }
+            if names.iter().any(|n| n.trim().is_empty()) {
+                return r#"{"error": "All supervisor names must be non-empty"}"#.to_string();
+            }
+        }
+        if input.num_supervisors < input.chores.len() {
+            return format!(
+                "{{\"error\": \"Need at least {} supervisor(s) (one per chore) but only {} provided\"}}",
+                input.chores.len(), input.num_supervisors
+            );
+        }
+    }
+
     if input.days == 0 {
         return r#"{"error": "Number of days must be at least 1"}"#.to_string();
     }
     if input.chores.is_empty() {
         return r#"{"error": "At least one chore is required"}"#.to_string();
     }
-    let slots_per_day: usize = input.chores.iter().map(|c| c.people_needed).sum();
-    if slots_per_day > input.num_people {
-        return format!(
-            "{{\"error\": \"Not enough people: need {} per day but only {} available\"}}",
-            slots_per_day, input.num_people
-        );
-    }
-    if slots_per_day == 0 {
+    let workers_per_day: usize = input.chores.iter().map(|c| c.people_needed).sum();
+    if workers_per_day == 0 {
         return r#"{"error": "Each chore must need at least 1 person"}"#.to_string();
     }
+    if workers_per_day > input.num_people {
+        return format!(
+            "{{\"error\": \"Need {} workers per day but only {} available\"}}",
+            workers_per_day, input.num_people
+        );
+    }
 
-    // Try tight variety bounds, then loosen, then drop entirely
-    let assignments = solve(&input, 0)
-        .or_else(|| solve(&input, 1))
-        .or_else(|| solve(&input, 2));
-
-    let assignments = match assignments {
+    // Solve workers
+    let work_assignments = match solve_workers(&input, 0)
+        .or_else(|| solve_workers(&input, 1))
+        .or_else(|| solve_workers(&input, 2))
+    {
         Some(a) => a,
-        None => {
-            return r#"{"error": "No feasible schedule found. Try fewer days, more people, or different chore sizes."}"#.to_string();
+        None => return r#"{"error": "No feasible worker schedule found."}"#.to_string(),
+    };
+
+    // Solve supervisors (independent problem)
+    let sup_assignments: Vec<(usize, usize, usize)> = if input.supervisors_enabled {
+        match solve_supervisors(&input, 0)
+            .or_else(|| solve_supervisors(&input, 1))
+            .or_else(|| solve_supervisors(&input, 2))
+        {
+            Some(a) => a,
+            None => return r#"{"error": "No feasible supervisor schedule found."}"#.to_string(),
         }
+    } else {
+        vec![]
     };
 
-    // Build output
-    let p = input.num_people;
-    let c = input.chores.len();
-    let d = input.days;
+    let p  = input.num_people;
+    let sv = input.num_supervisors;
+    let c  = input.chores.len();
+    let d  = input.days;
 
-    // Resolve display name for each person index
-    let label = |i: usize| -> String {
-        input.names.as_ref()
-            .and_then(|ns| ns.get(i))
-            .cloned()
-            .unwrap_or_else(|| person_label(i))
-    };
+    // Worker summary
+    let mut work_counts = vec![0usize; p];
+    for &(person, _, _) in &work_assignments { work_counts[person] += 1; }
+    let workers: Vec<SummaryEntry> = (0..p)
+        .map(|i| SummaryEntry { name: make_label(&input.names, i), total: work_counts[i] })
+        .collect();
 
-    // summary: count chores per person
-    let mut counts = vec![0usize; p];
-    for &(person, _, _) in &assignments {
-        counts[person] += 1;
-    }
+    // Supervisor summary
+    let mut sup_counts = vec![0usize; sv];
+    for &(sup, _, _) in &sup_assignments { sup_counts[sup] += 1; }
+    let supervisors: Vec<SummaryEntry> = (0..sv)
+        .map(|i| SummaryEntry { name: make_label(&input.supervisor_names, i), total: sup_counts[i] })
+        .collect();
 
-    let mut summary = std::collections::HashMap::new();
-    for person in 0..p {
-        summary.insert(label(person), counts[person]);
-    }
-
-    // schedule: for each day × chore, collect people
+    // Build schedule (supervisor listed on each assignment)
     let mut schedule: Vec<Assignment> = Vec::new();
     for day in 0..d {
         for chore in 0..c {
-            let people: Vec<String> = assignments
-                .iter()
+            let people: Vec<String> = work_assignments.iter()
                 .filter(|&&(_, ch, dy)| ch == chore && dy == day)
-                .map(|&(person, _, _)| label(person))
+                .map(|&(person, _, _)| make_label(&input.names, person))
                 .collect();
-            if !people.is_empty() {
+            let supervisor: Option<String> = sup_assignments.iter()
+                .find(|&&(_, ch, dy)| ch == chore && dy == day)
+                .map(|&(sup, _, _)| make_label(&input.supervisor_names, sup));
+            if !people.is_empty() || supervisor.is_some() {
                 schedule.push(Assignment {
                     day: day + 1,
                     chore: input.chores[chore].name.clone(),
+                    supervisor,
                     people,
                 });
             }
         }
     }
 
-    let output = Output { schedule, summary };
+    let output = Output { schedule, workers, supervisors };
     match serde_json::to_string(&output) {
         Ok(s) => s,
         Err(e) => format!("{{\"error\": \"Serialization error: {}\"}}", e),
